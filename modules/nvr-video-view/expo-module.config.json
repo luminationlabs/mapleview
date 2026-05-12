@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["NvrVideoViewModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.nvrvideoview.NvrVideoViewModule"]
+  }
+}
