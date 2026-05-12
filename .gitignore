@@ -1,0 +1,95 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# EAS
+.easignore
+eas.json
+eas.json.local
+
+# Local-only static config: holds the EAS projectId. Forks should copy
+# app.json.example to app.json and run `eas init` (or edit manually).
+app.json
+
+# Native build artifacts
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.keystore
+
+# Metro
+.metro-health-check*
+
+# Debug / log files
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+logs/
+
+# macOS
+.DS_Store
+*.pem
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+# TypeScript
+*.tsbuildinfo
+
+# Starter-template leftovers
+app-example
+
+# Generated native folders (created by `expo prebuild`)
+/ios
+/android
+
+# Editor / IDE
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# iOS / Xcode extras (if ios/ ever gets committed)
+xcuserdata/
+*.xcworkspace/xcuserdata/
+build/
+DerivedData/
+Pods/
+*.hmap
+*.ipa
+*.xcarchive
+
+# Android extras (if android/ ever gets committed)
+*.apk
+*.aab
+local.properties
+.gradle/
+captures/
+
+# Temp / OS artifacts
+Thumbs.db
+*.tmp
+*.bak
+
+# Local design sources
+design/
+
+# Claude Code session artifacts
+.claude/

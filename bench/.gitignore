@@ -1,0 +1,4 @@
+# Long replay-stream captures live here for the localhost WS replay
+# server. Too large (~30-100 MB per minute) to commit; regenerate
+# locally as needed.
+captures/

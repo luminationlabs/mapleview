@@ -1,0 +1,67 @@
+{
+  "capturedAt": "2026-04-25T00:26:12.873Z",
+  "host": "192.168.1.100",
+  "channelId": "{00000001-0000-0000-0000-000000000000}",
+  "range": {
+    "start": 1777074971,
+    "end": 1777075871
+  },
+  "fixtures": [
+    {
+      "name": "sub-keyframe.bin",
+      "byteLength": 43421,
+      "isKeyFrame": true,
+      "frameType": 4,
+      "codec": "h264",
+      "ptsUnix": 1777074970.7781181,
+      "streamIndex": 2,
+      "channelId": "{00000001-0000-0000-0000-000000000000}",
+      "capturedAt": "2026-04-25T00:26:11.694Z"
+    },
+    {
+      "name": "sub-pframe.bin",
+      "byteLength": 503,
+      "isKeyFrame": false,
+      "frameType": 4,
+      "codec": "h264",
+      "ptsUnix": 1777074970.8277225,
+      "streamIndex": 2,
+      "channelId": "{00000001-0000-0000-0000-000000000000}",
+      "capturedAt": "2026-04-25T00:26:11.696Z"
+    },
+    {
+      "name": "main-h264-keyframe.bin",
+      "byteLength": 43421,
+      "isKeyFrame": true,
+      "frameType": 4,
+      "codec": "h264",
+      "ptsUnix": 1777074970.7781181,
+      "streamIndex": 1,
+      "channelId": "{00000001-0000-0000-0000-000000000000}",
+      "capturedAt": "2026-04-25T00:26:12.174Z"
+    },
+    {
+      "name": "main-h264-pframe.bin",
+      "byteLength": 503,
+      "isKeyFrame": false,
+      "frameType": 4,
+      "codec": "h264",
+      "ptsUnix": 1777074970.8277225,
+      "streamIndex": 1,
+      "channelId": "{00000001-0000-0000-0000-000000000000}",
+      "capturedAt": "2026-04-25T00:26:12.174Z"
+    },
+    {
+      "name": "main-h265-keyframe.bin",
+      "byteLength": 632486,
+      "isKeyFrame": true,
+      "frameType": 0,
+      "codec": "h265",
+      "ptsUnix": 1777074971.516142,
+      "streamIndex": 0,
+      "channelId": "{00000001-0000-0000-0000-000000000000}",
+      "capturedAt": "2026-04-25T00:26:12.722Z"
+    }
+  ],
+  "failed": []
+}
