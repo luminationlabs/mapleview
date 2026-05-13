@@ -43,7 +43,7 @@
     "expo-status-bar": "~55.0.5",
     "expo-symbols": "~55.0.7",
     "expo-system-ui": "~55.0.15",
-    "fast-xml-parser": "^5.5.12",
+    "fast-xml-parser": "^5.7.0",
     "js-md5": "^0.8.3",
     "js-sha512": "^0.9.0",
     "react": "19.2.0",
