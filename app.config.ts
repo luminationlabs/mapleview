@@ -11,7 +11,9 @@ function hydrateEnvLocal(): void {
     const envPath = path.join(dir, ".env.local");
     if (!fs.existsSync(envPath)) continue;
     for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^"\n]*)"?\s*$/);
+      const m = line.match(
+        /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^"\n]*)"?\s*$/,
+      );
       if (m && process.env[m[1]] === undefined) {
         process.env[m[1]] = m[2];
       }
@@ -26,7 +28,7 @@ export default ({ config }: ConfigContext) => ({
   ...config,
   name: "Maple View",
   slug: "cameraview",
-  version: "1.1.0",
+  version: "1.2.0",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "cameraview",

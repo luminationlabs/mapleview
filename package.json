@@ -9,6 +9,7 @@
     "ios:device": "expo run:ios --device",
     "ios:release": "expo run:ios --configuration Release",
     "ios:build": "eas build --platform ios --profile production",
+    "ios:build:local": "PATH=/usr/bin:/bin:$PATH eas build --local --platform ios --profile production",
     "ios:build:adhoc": "eas build --platform ios --profile preview",
     "ios:submit": "eas submit --platform ios --profile production",
     "mac": "./scripts/run-mac.sh",
