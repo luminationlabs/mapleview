@@ -13,6 +13,21 @@ fi
 
 ./scripts/fix-maccatalyst-frameworks.sh
 
+# Preflight: CocoaPods caches external podspecs by source-content hash, so the
+# absolute HERMES_CLI_PATH baked in by hermes-engine.podspec survives a repo
+# move and `pod install` happily reuses it. Catch that before xcodebuild
+# wastes minutes failing in the JS bundle phase.
+XCCONFIG="ios/Pods/Target Support Files/Pods-MapleView/Pods-MapleView.release.xcconfig"
+if [ -f "$XCCONFIG" ]; then
+  HERMESC=$(awk -F'[[:space:]]*=[[:space:]]*' '/^HERMES_CLI_PATH[[:space:]]*=/ {print $2; exit}' "$XCCONFIG")
+  if [ -n "$HERMESC" ] && [ ! -x "$HERMESC" ]; then
+    echo "error: HERMES_CLI_PATH=$HERMESC (from $XCCONFIG) doesn't exist." >&2
+    echo "CocoaPods has cached a stale external podspec — usually from a previous repo location." >&2
+    echo "Fix: ./scripts/clean-cocoapods-cache.sh && (cd ios && pod install)" >&2
+    exit 1
+  fi
+fi
+
 OUT_DIR="build/mac"
 DERIVED="${TMPDIR%/}/MapleViewDerivedData-Release"
 rm -rf "$OUT_DIR"
