@@ -76,6 +76,7 @@ describe("playbackStore", () => {
     expect(state.isPlaying).toBe(false);
     expect(state.speed).toBe(1);
     expect(state.selectedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(state.followLiveEdge).toBe(true);
     expect(state.cameraSegments).toEqual({});
     expect(state.compositeSegments).toEqual([]);
     expect(state.loadingSegments).toBe(false);
@@ -101,6 +102,21 @@ describe("playbackStore", () => {
   it("setSelectedDate updates selectedDate", () => {
     playbackStore.getState().setSelectedDate("2026-01-15");
     expect(playbackStore.getState().selectedDate).toBe("2026-01-15");
+  });
+
+  it("setSelectedDate clears followLiveEdge for a past date", () => {
+    // Start in the default (followLiveEdge = true) state.
+    playbackStore.getState().setSelectedDate("2020-01-01");
+    expect(playbackStore.getState().followLiveEdge).toBe(false);
+  });
+
+  it("setSelectedDate sets followLiveEdge when picking today", () => {
+    playbackStore.getState().setSelectedDate("2020-01-01");
+    expect(playbackStore.getState().followLiveEdge).toBe(false);
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    playbackStore.getState().setSelectedDate(todayStr);
+    expect(playbackStore.getState().followLiveEdge).toBe(true);
   });
 
   it("setCameraSegments stores segments per channel", () => {

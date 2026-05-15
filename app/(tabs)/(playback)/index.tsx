@@ -16,6 +16,7 @@ import { queryDatesExistRec, queryChlRecLog } from '@/src/nvr/xml';
 import { queryChlRecLogFresh, queryDatesExistRecFresh } from '@/src/nvr/query-helpers';
 import { dayToUnixRange, projectTimeOntoDay, snapToNearestRange, unixToUtcTimeStr, utcTimeStrToUnix } from '@/src/utils/time';
 import { formatDateLabel } from '@/src/utils/date-label';
+import { useTimelineAutoRefresh } from '@/src/hooks/use-timeline-refresh';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useWindowDimensions } from 'react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -455,6 +456,85 @@ export default function PlaybackScreen() {
       setCurrentTime,
     ],
   );
+
+  // Background refresh — re-query every visible camera and merge the
+  // results without setting loadingSegments, so the spinner doesn't
+  // flash and the open streams keep playing. Used by
+  // useTimelineAutoRefresh to extend the timeline's right edge as new
+  // recordings land while the user is sitting on "today".
+  //
+  // Cancel guard: capture selectedDate at start; if it changes before
+  // the queries return, drop the writes so we don't overwrite a fresh
+  // date-switch init with stale data.
+  const refreshSegmentsBackground = useCallback(async () => {
+    const startDate = playbackStore.getState().selectedDate;
+    const cams = cameras;
+    if (cams.length === 0) return;
+    const startTimeStr = `${startDate} 00:00:00`;
+    const endTimeStr = `${startDate} 23:59:59`;
+
+    // Fire dates query alongside segment queries so a day-rollover
+    // refresh picks up the new "today" entry in the date picker. Same
+    // empty-result guard semantics: don't overwrite a populated picker
+    // with an empty response.
+    const [results, datesResult] = await Promise.all([
+      Promise.all(
+        cams.map(async (cam) => {
+          try {
+            const segments = await queryChlRecLogFresh(
+              cam.channelId,
+              startTimeStr,
+              endTimeStr,
+            );
+            return { channelId: cam.channelId, segments };
+          } catch (err) {
+            console.log(
+              `[playback] refresh: failed for ${cam.channelId.slice(1, 9)}:`,
+              err instanceof Error ? err.message : err,
+            );
+            return null;
+          }
+        }),
+      ),
+      fetchAvailableDates(),
+    ]);
+
+    if (playbackStore.getState().selectedDate !== startDate) return;
+
+    // Treat an empty result as "probably stale session" when we have
+    // prior non-empty data — the NVR returns 200 OK + empty recList for
+    // an HTTP token that another login has invalidated, and on a long-
+    // background foreground the auto-refresh can race nvrClient's
+    // re-auth. Overwriting good segments with [] would make the
+    // timeline briefly retreat before the next 45s tick recovers.
+    const prior = playbackStore.getState().cameraSegments;
+    for (const r of results) {
+      if (!r) continue;
+      if (r.segments.length === 0 && (prior[r.channelId]?.length ?? 0) > 0) {
+        continue;
+      }
+      setCameraSegments(r.channelId, r.segments);
+    }
+    computeCompositeSegments(cams.map((c) => c.channelId));
+
+    if (
+      datesResult !== null &&
+      !(datesResult.length === 0 && availableDatesRef.current.size > 0)
+    ) {
+      // Skip the write when the date set is unchanged — otherwise the
+      // new Set identity churns every 45s and re-renders the screen.
+      const prev = availableDatesRef.current;
+      const same =
+        prev.size === datesResult.length &&
+        datesResult.every((d) => prev.has(d));
+      if (!same) setAvailableDates(new Set(datesResult));
+    }
+  }, [cameras, setCameraSegments, computeCompositeSegments, fetchAvailableDates]);
+
+  useTimelineAutoRefresh({
+    refresh: refreshSegmentsBackground,
+    onDayRollover: handleSelectDate,
+  });
 
   let tabBarHeight: number;
   try {

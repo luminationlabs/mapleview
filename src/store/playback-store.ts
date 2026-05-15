@@ -50,6 +50,14 @@ export interface PlaybackState {
   speed: 1 | 2 | 4 | 8;
   selectedDate: string;          // "YYYY-MM-DD" (local)
 
+  // True when `selectedDate` represents the live-recording edge ("today"
+  // at the time it was set). False once the user explicitly picks a
+  // historical date. Drives day-rollover behavior in
+  // useTimelineAutoRefresh: when this is true and `todayStr()` has moved
+  // past `selectedDate`, the hook auto-advances selectedDate to the new
+  // today so the timeline keeps tracking the recording edge.
+  followLiveEdge: boolean;
+
   // Per-camera segments keyed by channelId
   cameraSegments: Record<string, RecordingSegment[]>;
 
@@ -105,6 +113,7 @@ export const playbackStore = createStore<PlaybackState>((set, get) => ({
   isPlaying: false,
   speed: 1,
   selectedDate: todayStr(),
+  followLiveEdge: true,
   cameraSegments: {},
   compositeSegments: [],
   loadingSegments: false,
@@ -118,7 +127,8 @@ export const playbackStore = createStore<PlaybackState>((set, get) => ({
   setSpeed: (s: 1 | 2 | 4 | 8) => set({ speed: s }),
   bumpSeekEpoch: () =>
     set((state) => ({ seekEpoch: state.seekEpoch + 1 })),
-  setSelectedDate: (d: string) => set({ selectedDate: d }),
+  setSelectedDate: (d: string) =>
+    set({ selectedDate: d, followLiveEdge: d === todayStr() }),
 
   setCameraSegments: (channelId: string, segments: RecordingSegment[]) =>
     set((state) => ({

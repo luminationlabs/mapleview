@@ -38,6 +38,7 @@ import { usePlaybackRateOverlay } from '@/src/components/playback-rate-overlay';
 import { useUIStore } from '@/src/store/ui-store';
 import { dayToUnixRange, projectTimeOntoDay, unixToUtcTimeStr, utcTimeStrToUnix } from '@/src/utils/time';
 import { formatDateLabel } from '@/src/utils/date-label';
+import { useTimelineAutoRefresh } from '@/src/hooks/use-timeline-refresh';
 import { ThemedText } from '@/src/components/ui/themed-text';
 import { Surface } from '@/src/constants/theme';
 import type { CameraInfo, RecordingSegment, TimeRange } from '@/src/nvr/types';
@@ -144,6 +145,18 @@ export default function PlaybackCameraScreen() {
 
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [availableDates, setAvailableDates] = useState<Set<string>>(new Set());
+  // Mirrors availableDates into a ref so the background refresh can
+  // read the current size without taking it as a useCallback dep
+  // (which would churn the callback on every dates update).
+  const availableDatesRef = useRef(availableDates);
+  availableDatesRef.current = availableDates;
+  // Mirrors the current channelId so the background refresh can detect
+  // a mid-flight camera swipe (router.setParams changes channelId
+  // without remounting). Writes to screen-local state like
+  // setAvailableDates would otherwise apply the old camera's data to
+  // the new camera's screen.
+  const channelIdRef = useRef(channelId);
+  channelIdRef.current = channelId;
   // True when the playback connection's retry chain exhausted without
   // receiving any frame (e.g., stale-session HTTP 400 on WS upgrade that
   // outlived the auto-recovery path). Distinct from initFailed, which
@@ -439,6 +452,76 @@ export default function PlaybackCameraScreen() {
       setCurrentTime,
     ],
   );
+
+  // Background refresh — re-query this channel's segments and merge in
+  // place, without setting loadingSegments. Used by
+  // useTimelineAutoRefresh to extend the timeline's right edge as new
+  // recordings land while the user is sitting on "today". Cancel guard
+  // drops writes if the date changed mid-query so we don't overwrite a
+  // fresh date-switch with stale results.
+  const refreshSegmentsBackground = useCallback(async () => {
+    if (!channelId) return;
+    const startDate = playbackStore.getState().selectedDate;
+    const startTimeStr = `${startDate} 00:00:00`;
+    const endTimeStr = `${startDate} 23:59:59`;
+
+    // Fire dates query alongside segments so a day-rollover refresh
+    // picks up the new "today" entry in the date picker.
+    const [segmentsResult, datesResult] = await Promise.all([
+      queryChlRecLogFresh(channelId, startTimeStr, endTimeStr).catch(
+        (err) => {
+          console.log(
+            '[playback-camera] refresh failed:',
+            err instanceof Error ? err.message : err,
+          );
+          return null;
+        },
+      ),
+      queryDatesExistRecFresh(channelId).catch((err) => {
+        console.log(
+          '[playback-camera] refresh dates failed:',
+          err instanceof Error ? err.message : err,
+        );
+        return null;
+      }),
+    ]);
+
+    if (playbackStore.getState().selectedDate !== startDate) return;
+
+    // Treat empty as "probably stale session" when we already have
+    // segments cached — see the matching guard in the grid screen.
+    if (segmentsResult !== null) {
+      const prior =
+        playbackStore.getState().cameraSegments[channelId]?.length ?? 0;
+      if (!(segmentsResult.length === 0 && prior > 0)) {
+        setCameraSegments(channelId, segmentsResult);
+      }
+    }
+
+    // Drop the dates write if the user swiped to another camera while
+    // this refresh was in-flight — dates are per-channel, and writing
+    // the old camera's set into screen-local state would shadow the
+    // new camera's. setCameraSegments above is fine: it's keyed by the
+    // captured channelId in the store, so writing the old channel's
+    // segments to its own cache is still correct.
+    if (
+      datesResult !== null &&
+      channelIdRef.current === channelId &&
+      !(datesResult.dates.length === 0 && availableDatesRef.current.size > 0)
+    ) {
+      // Skip the write when the date set is unchanged — see grid screen.
+      const prev = availableDatesRef.current;
+      const same =
+        prev.size === datesResult.dates.length &&
+        datesResult.dates.every((d) => prev.has(d));
+      if (!same) setAvailableDates(new Set(datesResult.dates));
+    }
+  }, [channelId, setCameraSegments]);
+
+  useTimelineAutoRefresh({
+    refresh: refreshSegmentsBackground,
+    onDayRollover: handleSelectDate,
+  });
 
   // ---- Pinch / Pan / Tap gestures ----
   const scale = useSharedValue(1);
