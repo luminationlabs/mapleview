@@ -30,10 +30,29 @@ export type OnErrorPayload = {
   message: string;
 };
 
+/**
+ * Stream presentation dimensions, parsed from the SPS when a keyframe
+ * builds a new format description. Pixel-aspect-ratio and clean-aperture
+ * corrected, so `width / height` is the display aspect ratio of what the
+ * native layer actually letterboxes. Fires once per size change (the
+ * native side de-duplicates the per-keyframe re-parses).
+ */
+export type OnVideoSizePayload = {
+  width: number;
+  height: number;
+};
+
 export type NvrVideoViewProps = {
   backgroundHex?: string;
+  /**
+   * Currently a no-op: onFeed fires per frame, so it is deliberately not
+   * declared as a view event on the native side — declaring it would pay
+   * a per-frame native→JS dispatch even with no listener. Declare it in
+   * NvrVideoViewModule.swift's Events() before consuming this prop.
+   */
   onFeed?: (event: { nativeEvent: OnFeedPayload }) => void;
   onError?: (event: { nativeEvent: OnErrorPayload }) => void;
+  onVideoSize?: (event: { nativeEvent: OnVideoSizePayload }) => void;
   style?: StyleProp<ViewStyle>;
 };
 

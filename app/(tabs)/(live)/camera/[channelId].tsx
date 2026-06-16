@@ -7,6 +7,7 @@ import {
   View,
 } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -18,7 +19,7 @@ import Animated, {
 import { runOnJS } from 'react-native-worklets';
 import { Ionicons } from '@expo/vector-icons';
 
-import { NvrVideoView } from '@/modules/nvr-video-view';
+import { NvrVideoView, type OnVideoSizePayload } from '@/modules/nvr-video-view';
 import { useCamera } from '@/src/hooks/use-camera';
 import { useCameraStore } from '@/src/store/camera-store';
 import { nvrClient } from '@/src/nvr/client';
@@ -88,12 +89,6 @@ export default function SingleCameraScreen() {
       startChromeTimer();
     }
   }, [chromeVisible, clearChromeTimer, startChromeTimer]);
-
-  // Show chrome initially, then auto-hide
-  useEffect(() => {
-    startChromeTimer();
-    return clearChromeTimer;
-  }, [startChromeTimer, clearChromeTimer]);
 
   const chromeStyle = useAnimatedStyle(() => ({
     opacity: chromeVisible.value,
@@ -205,27 +200,64 @@ export default function SingleCameraScreen() {
   const viewportW = useSharedValue(screenW);
   const viewportH = useSharedValue(screenH);
 
+  // Actual stream aspect ratio, reported by the native view once the SPS
+  // is parsed (presentation dimensions, so anamorphic streams come out
+  // right). Defaults to 16:9 until the first keyframe lands. Sub-streams
+  // are often 4:3 — hardcoding 16:9 here made the clamp think the image
+  // was shorter than displayed, leaving its top/bottom unreachable when
+  // zoomed. Not reset on channel switch: the native side re-emits
+  // whenever the dimensions actually change.
+  const videoAR = useSharedValue(16 / 9);
+  const handleVideoSize = useCallback(
+    (e: { nativeEvent: OnVideoSizePayload }) => {
+      const { width, height } = e.nativeEvent;
+      if (width > 0 && height > 0) videoAR.value = width / height;
+    },
+    [videoAR],
+  );
+
+  // Safe-area insets re-resolve on rotation; the gesture worklets are
+  // rebuilt on that re-render, so capturing the plain numbers is safe.
+  const insets = useSafeAreaInsets();
+
   const clampTranslate = (
     tx: number,
     ty: number,
     s: number,
   ): [number, number] => {
     'worklet';
-    // NVR streams are 16:9. Compute the fit-inside displayed size of the
-    // video within the viewport (letterbox/pillarbox), then clamp the
-    // translation so the scaled content never exposes background past the
-    // viewport edge — matching iOS Photos behavior.
-    const VIDEO_AR = 16 / 9;
+    // Compute the fit-inside displayed size of the video within the
+    // viewport (letterbox/pillarbox), then clamp the translation so the
+    // scaled content never exposes background past the viewport edge —
+    // matching iOS Photos behavior, except each edge may over-pan up to
+    // the safe-area inset so it can be pulled out from under the dynamic
+    // island / curved corners.
+    const ar = videoAR.value;
     const vw = viewportW.value;
     const vh = viewportH.value;
     const viewportAR = vw / vh;
-    const contentW = viewportAR > VIDEO_AR ? vh * VIDEO_AR : vw;
-    const contentH = viewportAR > VIDEO_AR ? vh : vw / VIDEO_AR;
-    const maxTx = Math.max(0, (contentW * s - vw) / 2);
-    const maxTy = Math.max(0, (contentH * s - vh) / 2);
+    const contentW = viewportAR > ar ? vh * ar : vw;
+    const contentH = viewportAR > ar ? vh : vw / ar;
+    // Signed overflow per axis — negative means the image fits with a gap.
+    // max(0, raw + inset) lets each edge reach exactly the safe-area
+    // boundary: a full inset of over-pan when the axis overflows,
+    // decaying to zero as the fit gap grows past the inset. Flooring the
+    // overflow before adding the inset would instead lock panning at
+    // scales where the image fits the axis but its edge sits inside the
+    // inset zone (16:9 landscape at ~1.0–1.2x), trapping the edge under
+    // the notch. Positive tx reveals the image's left edge, so it pairs
+    // with the left inset (and vice versa); same logic vertically.
+    const rawX = (contentW * s - vw) / 2;
+    const rawY = (contentH * s - vh) / 2;
     return [
-      Math.min(maxTx, Math.max(-maxTx, tx)),
-      Math.min(maxTy, Math.max(-maxTy, ty)),
+      Math.min(
+        Math.max(0, rawX + insets.left),
+        Math.max(-Math.max(0, rawX + insets.right), tx),
+      ),
+      Math.min(
+        Math.max(0, rawY + insets.top),
+        Math.max(-Math.max(0, rawY + insets.bottom), ty),
+      ),
     ];
   };
 
@@ -336,10 +368,15 @@ export default function SingleCameraScreen() {
       }
     });
 
+  // Taps are mutually exclusive with doubleTap taking priority: singleTap
+  // is recognized only once doubleTap fails (~200ms after a lone tap), so
+  // double-tap-to-zoom works and a single tap toggles the chrome. A flat
+  // Race(doubleTap, singleTap) would let singleTap activate on the first
+  // touch-up and cancel doubleTap every time (1-tap handlers go ACTIVE
+  // immediately on release).
   const composed = Gesture.Race(
     Gesture.Simultaneous(pinch, pan, swipePan, downSwipe),
-    doubleTap,
-    singleTap,
+    Gesture.Exclusive(doubleTap, singleTap),
   );
 
   // Reset zoom/pan when the channel changes via swipe (same screen, new
@@ -379,6 +416,20 @@ export default function SingleCameraScreen() {
   const isDisconnected =
     effectiveStatus === 'offline' || effectiveStatus === 'failed';
 
+  // Show chrome on mount, then auto-hide. While the disconnect overlay is
+  // up, force the bar visible and cancel the timer: the overlay sits over
+  // the gesture layer, so tap-to-show couldn't fire and Back would be
+  // unreachable behind a hidden bar.
+  useEffect(() => {
+    if (isDisconnected) {
+      clearChromeTimer();
+      chromeVisible.value = withTiming(1, { duration: 300 });
+    } else {
+      startChromeTimer();
+    }
+    return clearChromeTimer;
+  }, [isDisconnected, chromeVisible, startChromeTimer, clearChromeTimer]);
+
   const handleRetry = useCallback(() => {
     if (!channelId) return;
     // hardRetry tears down live + playback state and does a fresh login,
@@ -413,6 +464,7 @@ export default function SingleCameraScreen() {
             <NvrVideoView
               ref={viewRef}
               backgroundHex="#000000"
+              onVideoSize={handleVideoSize}
               style={styles.video}
             />
           </Animated.View>
@@ -422,7 +474,10 @@ export default function SingleCameraScreen() {
             frame, where the native view is still black but status may
             already read "online" (from enumerate). */}
         {(effectiveStatus === 'connecting' || (!isDisconnected && !hasFirstFrame)) && (
-          <View style={styles.loadingOverlay}>
+          // pointerEvents none so taps/swipes still reach the gesture
+          // layer underneath — chrome toggle, camera swipe, and
+          // swipe-down-to-close keep working while connecting.
+          <View style={styles.loadingOverlay} pointerEvents="none">
             <ActivityIndicator size="large" color="#FFFFFF" />
           </View>
         )}

@@ -23,7 +23,7 @@ import Animated, {
 import { runOnJS } from 'react-native-worklets';
 import { Ionicons } from '@expo/vector-icons';
 
-import { NvrVideoView } from '@/modules/nvr-video-view';
+import { NvrVideoView, type OnVideoSizePayload } from '@/modules/nvr-video-view';
 import { usePlayback } from '@/src/hooks/use-playback';
 import { useCameraStore, cameraStore } from '@/src/store/camera-store';
 import { usePlaybackStore, playbackStore, segmentCoveringTime } from '@/src/store/playback-store';
@@ -45,6 +45,7 @@ import type { CameraInfo, RecordingSegment, TimeRange } from '@/src/nvr/types';
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 8;
+const CHROME_TIMEOUT = 3000;
 const DOUBLE_TAP_ZOOM = 2;
 const SWIPE_DIST_THRESHOLD = 60;
 const SWIPE_VELOCITY_THRESHOLD = 500;
@@ -523,6 +524,56 @@ export default function PlaybackCameraScreen() {
     onDayRollover: handleSelectDate,
   });
 
+  // ---- Chrome auto-hide (top bar) ----
+  // Mirrors the live screen: single tap toggles, auto-hides after
+  // CHROME_TIMEOUT. Only the overlay top bar hides — the transport
+  // controls and timeline below the video stay put.
+  const chromeVisible = useSharedValue(1);
+  const chromeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearChromeTimer = useCallback(() => {
+    if (chromeTimerRef.current) {
+      clearTimeout(chromeTimerRef.current);
+      chromeTimerRef.current = null;
+    }
+  }, []);
+
+  const startChromeTimer = useCallback(() => {
+    clearChromeTimer();
+    chromeTimerRef.current = setTimeout(() => {
+      chromeVisible.value = withTiming(0, { duration: 300 });
+    }, CHROME_TIMEOUT);
+  }, [clearChromeTimer, chromeVisible]);
+
+  const toggleChrome = useCallback(() => {
+    if (chromeVisible.value > 0.5) {
+      clearChromeTimer();
+      chromeVisible.value = withTiming(0, { duration: 300 });
+    } else {
+      chromeVisible.value = withTiming(1, { duration: 300 });
+      startChromeTimer();
+    }
+  }, [chromeVisible, clearChromeTimer, startChromeTimer]);
+
+  // Show chrome on mount, then auto-hide. While a retry overlay is up,
+  // force the bar visible and cancel the timer: the overlay sits over the
+  // gesture layer, so tap-to-show couldn't fire and Back would be
+  // unreachable behind a hidden bar.
+  useEffect(() => {
+    if (initFailed || channelFailed) {
+      clearChromeTimer();
+      chromeVisible.value = withTiming(1, { duration: 300 });
+    } else {
+      startChromeTimer();
+    }
+    return clearChromeTimer;
+  }, [initFailed, channelFailed, chromeVisible, clearChromeTimer, startChromeTimer]);
+
+  const chromeStyle = useAnimatedStyle(() => ({
+    opacity: chromeVisible.value,
+    pointerEvents: chromeVisible.value > 0.5 ? 'auto' : 'none',
+  }));
+
   // ---- Pinch / Pan / Tap gestures ----
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -538,25 +589,50 @@ export default function PlaybackCameraScreen() {
   const viewportW = useSharedValue(screenW);
   const viewportH = useSharedValue(screenH);
 
+  // Actual stream aspect ratio, reported by the native view once the SPS
+  // is parsed. Defaults to 16:9 until the first keyframe lands; see the
+  // live screen's twin for why this must not be hardcoded (4:3 sub-
+  // streams made the image top/bottom unreachable when zoomed).
+  const videoAR = useSharedValue(16 / 9);
+  const handleVideoSize = useCallback(
+    (e: { nativeEvent: OnVideoSizePayload }) => {
+      const { width, height } = e.nativeEvent;
+      if (width > 0 && height > 0) videoAR.value = width / height;
+    },
+    [videoAR],
+  );
+
   const clampTranslate = (
     tx: number,
     ty: number,
     s: number,
   ): [number, number] => {
     'worklet';
-    // NVR streams are 16:9. Compute fit-inside content size, clamp against
-    // that so pan never reveals background past the viewport (iOS Photos).
-    const VIDEO_AR = 16 / 9;
+    // Compute fit-inside content size, clamp against that so pan never
+    // reveals background past the viewport (iOS Photos), except each edge
+    // may over-pan up to the safe-area inset so it can be pulled out from
+    // under the dynamic island / curved corners. See the live screen's
+    // twin for why the overflow stays signed (near-fit scales would
+    // otherwise trap an edge under the notch). No bottom over-pan here:
+    // the video area's bottom edge borders the transport controls, not
+    // the screen edge.
+    const ar = videoAR.value;
     const vw = viewportW.value;
     const vh = viewportH.value;
     const viewportAR = vw / vh;
-    const contentW = viewportAR > VIDEO_AR ? vh * VIDEO_AR : vw;
-    const contentH = viewportAR > VIDEO_AR ? vh : vw / VIDEO_AR;
-    const maxTx = Math.max(0, (contentW * s - vw) / 2);
-    const maxTy = Math.max(0, (contentH * s - vh) / 2);
+    const contentW = viewportAR > ar ? vh * ar : vw;
+    const contentH = viewportAR > ar ? vh : vw / ar;
+    const rawX = (contentW * s - vw) / 2;
+    const rawY = (contentH * s - vh) / 2;
     return [
-      Math.min(maxTx, Math.max(-maxTx, tx)),
-      Math.min(maxTy, Math.max(-maxTy, ty)),
+      Math.min(
+        Math.max(0, rawX + insets.left),
+        Math.max(-Math.max(0, rawX + insets.right), tx),
+      ),
+      Math.min(
+        Math.max(0, rawY + insets.top),
+        Math.max(-Math.max(0, rawY), ty),
+      ),
     ];
   };
 
@@ -616,6 +692,12 @@ export default function PlaybackCameraScreen() {
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
       }
+    });
+
+  const singleTap = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd(() => {
+      runOnJS(toggleChrome)();
     });
 
   // ---- Swipe between cameras (single-cam playback) ----
@@ -824,9 +906,12 @@ export default function PlaybackCameraScreen() {
       }
     });
 
+  // Exclusive gives doubleTap priority: singleTap is recognized only once
+  // doubleTap fails (~200ms after a lone tap), so double-tap-to-zoom works
+  // and a single tap toggles the chrome — see the live screen's twin.
   const composed = Gesture.Race(
     Gesture.Simultaneous(pinch, pan, swipePan, downSwipe),
-    doubleTap,
+    Gesture.Exclusive(doubleTap, singleTap),
   );
 
   // Reset zoom/pan when the channel changes via swipe (screen stays mounted,
@@ -878,6 +963,7 @@ export default function PlaybackCameraScreen() {
             <NvrVideoView
               ref={viewRef}
               backgroundHex="#000000"
+              onVideoSize={handleVideoSize}
               style={styles.video}
             />
           </Animated.View>
@@ -890,7 +976,10 @@ export default function PlaybackCameraScreen() {
             Suppressed when we're intentionally in a gap — the manager
             keeps the connection closed there, so no frame is coming. */}
         {!hasFirstFrame && !initFailed && !channelFailed && !showNoFootage && (
-          <View style={styles.loadingOverlay}>
+          // pointerEvents none so taps/swipes still reach the gesture
+          // layer underneath while the spinner is up (chrome toggle,
+          // camera swipe, swipe-down-to-close).
+          <View style={styles.loadingOverlay} pointerEvents="none">
             <ActivityIndicator size="large" color="#FFFFFF" />
           </View>
         )}
@@ -898,7 +987,7 @@ export default function PlaybackCameraScreen() {
         {/* No footage overlay — current playhead sits in a gap for this
             camera (e.g., before its first recording of the day). */}
         {showNoFootage && (
-          <View style={styles.noFootageOverlay}>
+          <View style={styles.noFootageOverlay} pointerEvents="none">
             <ThemedText style={styles.noFootageText}>No footage</ThemedText>
           </View>
         )}
@@ -922,8 +1011,9 @@ export default function PlaybackCameraScreen() {
         )}
       </View>
 
-      {/* Top chrome: camera name + back button (overlay, matches live view) */}
-      <View style={styles.chrome} pointerEvents="box-none">
+      {/* Top chrome: camera name + back button (overlay, matches live view).
+          Animated style drives opacity + pointerEvents for tap-to-toggle. */}
+      <Animated.View style={[styles.chrome, chromeStyle]}>
         <View style={styles.topBar}>
           <Pressable
             onPress={() => router.back()}
@@ -954,7 +1044,7 @@ export default function PlaybackCameraScreen() {
             <Ionicons name="videocam-outline" size={24} color="#FFFFFF" />
           </Pressable>
         </View>
-      </View>
+      </Animated.View>
 
       {/* Controls area */}
       <View style={styles.controlsArea}>

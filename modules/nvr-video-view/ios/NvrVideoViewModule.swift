@@ -9,15 +9,26 @@ public class NvrVideoViewModule: Module {
       return "0.0.1-dummy"
     }
 
-    // Events emitted by the view:
-    //   onFeed  — fires after each feed() call (frame metadata).
-    //   onError — fires when the decoder hits a recoverable or fatal
-    //             failure. See NvrVideoView.swift `emitError` for codes.
-    //             De-duplicated so a persistent failure doesn't flood
-    //             the bridge.
-    Events("onFeed", "onError")
-
     View(NvrVideoView.self) {
+      // Events emitted by the view. Declared inside View() — view event
+      // names are collected from the View definition only; a module-level
+      // Events() call does not register them as view props.
+      //   onError     — fires when the decoder hits a recoverable or fatal
+      //                 failure. See NvrVideoView.swift `emitError` for
+      //                 codes. De-duplicated so a persistent failure
+      //                 doesn't flood the bridge.
+      //   onVideoSize — fires when the stream's presentation dimensions
+      //                 become known or change (SPS parsed on a keyframe).
+      //                 Drives the JS pinch-zoom pan clamp.
+      // onFeed (the per-frame EventDispatcher in NvrVideoView.swift) is
+      // deliberately NOT declared: declaring a view event installs a live
+      // dispatch handler at view creation, so every feed() would convert
+      // its payload and hop to the JS thread even with no JS listener —
+      // per frame, per grid tile. Undeclared, the dispatcher's handler
+      // stays nil and the call is a free no-op. Declare it only when
+      // something on the JS side actually consumes it.
+      Events("onError", "onVideoSize")
+
       // Simple prop — drives the view's background color.
       Prop("backgroundHex") { (view: NvrVideoView, hex: String) in
         view.setBackgroundHex(hex)

@@ -27,6 +27,34 @@ final class NvrVideoView: ExpoView {
   let onError = EventDispatcher()
   private var lastErrorCode: String?
 
+  // MARK: – Video size reporting
+  //
+  // onVideoSize fires when the stream's presentation dimensions become
+  // known or change (SPS/VPS parsed into a new format description on a
+  // keyframe). JS uses this to clamp pinch-zoom panning against the real
+  // displayed image box — stream aspect ratios vary (sub-streams are
+  // often 4:3), so the JS side must not assume 16:9. Presentation
+  // dimensions are pixel-aspect-ratio and clean-aperture corrected,
+  // matching what `.resizeAspect` actually displays. De-duplicated by
+  // value: extractParameterSets rebuilds the format description on every
+  // keyframe, but the size only crosses the bridge when it changes.
+  let onVideoSize = EventDispatcher()
+  private var lastReportedVideoSize: CGSize?
+
+  private func reportVideoSize(_ fmt: CMFormatDescription) {
+    let size = CMVideoFormatDescriptionGetPresentationDimensions(
+      fmt,
+      usePixelAspectRatio: true,
+      useCleanAperture: true
+    )
+    guard size.width > 0, size.height > 0, size != lastReportedVideoSize else { return }
+    lastReportedVideoSize = size
+    onVideoSize([
+      "width": Double(size.width),
+      "height": Double(size.height),
+    ])
+  }
+
   private func emitError(_ code: String, _ message: String) {
     if lastErrorCode == code { return }
     lastErrorCode = code
@@ -489,6 +517,7 @@ final class NvrVideoView: ExpoView {
 
     if status == noErr, let fmt = fmt {
       formatDescription = fmt
+      reportVideoSize(fmt)
     } else {
       emitError(
         "format_description",
@@ -522,6 +551,7 @@ final class NvrVideoView: ExpoView {
 
       if status == noErr, let fmt = fmt {
         formatDescription = fmt
+        reportVideoSize(fmt)
       } else {
         emitError(
           "format_description",
